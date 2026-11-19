@@ -1,198 +1,191 @@
 /** @param {NS} ns
- * NEXUS SCHEDULER V2 - estimation des preparations et simulation de RAM.
- * Aucune instruction hack/grow/weaken, scp, exec ou kill ici.
+ * NEXUS SCHEDULER V3 - planification temporelle en lecture seule.
+ * Un seul cycle et une seule phase de preparation sont proposes a la fois.
+ * Aucun exec, kill, scp, hack, grow ou weaken n'est lance.
  */
 import { analyzeNetwork, TARGETING } from "/nexus/core/targeting.js";
 import { CONFIG } from "/nexus/config/config.js";
 
-export const VERSION = 2;
+export const VERSION = 3;
 
-// Cout theorique des scripts mono-operation standard (GB / thread).
-// A confirmer quand les vrais workers seront crees et mesures.
+// Cout theorique pour de futurs workers mono-operation.
+// Remplacer par getScriptRam() lorsque ces workers existeront.
 export const OPERATION_RAM = Object.freeze({
-    HACK: 1.70,
-    GROW: 1.75,
-    WEAKEN: 1.75
+    HACK: 1.70, GROW: 1.75, WEAKEN: 1.75
 });
 
-const safe = (value, fallback = 0) =>
-    Number.isFinite(value) && value >= 0 ? value : fallback;
+const valid = (v, fallback = 0) =>
+    Number.isFinite(v) && v >= 0 ? v : fallback;
 
-const threadsNeeded = (amount, effect) =>
-    amount <= 0 ? 0 :
-        effect > 0 ? Math.ceil(amount / effect) : Infinity;
+function requiredThreads(amount, effect) {
+    if (amount <= 0) return 0;
+    return effect > 0 ? Math.ceil(amount / effect) : Infinity;
+}
+
+function activeTargets(ns, executionHosts) {
+    const active = new Map();
+    for (const machine of executionHosts) {
+        for (const p of ns.ps(machine.host)) {
+            // Reconnaissance du worker existant, sans le modifier.
+            const file = String(p.filename).replace(/^\/+/, "");
+            if (file !== "nexus/workers/hack.js") continue;
+            const target = String(p.args?.[0] ?? "n00dles");
+            active.set(target, (active.get(target) ?? 0) + p.threads);
+        }
+    }
+    return active;
+}
 
 export function estimatePreparation(ns, target, options = {}) {
-    const securityTolerance = options.securityTolerance ??
-        TARGETING.securityTolerance;
-    const readyRatio = options.moneyReadyRatio ??
-        TARGETING.moneyReadyRatio;
-    const hackFraction = options.hackFraction ?? 0.10;
-    const weakenEffect = safe(ns.weakenAnalyze(1, 1));
-    const desiredMoney = target.maxMoney * readyRatio;
-    const securityToRemove = Math.max(
-        0, target.security - (target.minSecurity + securityTolerance)
-    );
-
-    const weakenInitial = threadsNeeded(securityToRemove, weakenEffect);
-    const multiplier = desiredMoney > 0
-        ? desiredMoney / Math.max(1, target.money)
-        : 1;
-    let growThreads = 0;
-    if (multiplier > 1) {
-        const raw = ns.growthAnalyze(target.host, multiplier, 1);
-        growThreads = Number.isFinite(raw) && raw >= 0
-            ? Math.ceil(raw)
-            : Infinity;
-    }
-
-    // Chaque grow augmente la securite ; l'ajout doit etre affaibli.
+    const tolerance = options.securityTolerance ?? TARGETING.securityTolerance;
+    const ratio = options.moneyReadyRatio ?? TARGETING.moneyReadyRatio;
+    const minSecurity = target.minSecurity;
+    const weakenEffect = valid(ns.weakenAnalyze(1, 1));
+    const securityExcess = Math.max(0, target.security - minSecurity - tolerance);
+    const weakenInitial = requiredThreads(securityExcess, weakenEffect);
+    const desired = ratio * target.maxMoney;
+    const multiplier = desired / Math.max(1, target.money);
+    const growRaw = multiplier > 1
+        ? ns.growthAnalyze(target.host, multiplier, 1) : 0;
+    const growThreads = Number.isFinite(growRaw) && growRaw >= 0
+        ? Math.ceil(growRaw) : Infinity;
     const growSecurity = Number.isFinite(growThreads)
-        ? safe(ns.growthAnalyzeSecurity(growThreads, target.host, 1))
+        ? valid(ns.growthAnalyzeSecurity(growThreads, target.host, 1))
         : Infinity;
-    const weakenAfterGrow = threadsNeeded(growSecurity, weakenEffect);
+    const weakenAfterGrow = requiredThreads(growSecurity, weakenEffect);
 
-    // Ne pas promettre de hack reel sur une cible non prete.
-    const hackThreads = target.state === "EXPLOITABLE" &&
-        target.fractionPerThread > 0
-        ? Math.max(1, Math.floor(hackFraction / target.fractionPerThread))
-        : 0;
-
-    const prepThreads = weakenInitial + growThreads + weakenAfterGrow;
+    // Les phases sont successives : pas de compensation fictive simultanee.
+    const stages = [
+        { operation: "WEAKEN", threads: weakenInitial,
+            durationMs: valid(ns.getWeakenTime(target.host)), label: "securite" },
+        { operation: "GROW", threads: growThreads,
+            durationMs: valid(ns.getGrowTime(target.host)), label: "argent" },
+        { operation: "WEAKEN", threads: weakenAfterGrow,
+            durationMs: valid(ns.getWeakenTime(target.host)), label: "compensation" }
+    ];
     const prepRam = (weakenInitial + weakenAfterGrow) * OPERATION_RAM.WEAKEN +
         growThreads * OPERATION_RAM.GROW;
-    const prepTimeMs = Math.max(
-        weakenInitial + weakenAfterGrow > 0 ? safe(ns.getWeakenTime(target.host)) : 0,
-        growThreads > 0 ? safe(ns.getGrowTime(target.host)) : 0
-    );
-    const hackTimeMs = safe(target.hackTime);
-
-    // Score indicatif : gain theorique d'UN thread / duree totale de
-    // preparation + hack. Penalisation du cout de preparation en RAM.
-    // Ce n'est PAS un rendement net de batch.
-    const denominator = Math.max(1, (prepTimeMs + hackTimeMs) / 1000);
-    const score = target.estimatedDollarsPerSecond > 0
-        ? target.estimatedDollarsPerSecond * (hackTimeMs / 1000) /
-            denominator / (1 + prepRam / 64)
-        : 0;
-
     return {
-        host: target.host,
-        state: target.state,
-        weakenInitial, growThreads, weakenAfterGrow, hackThreads,
-        prepThreads, prepRam, prepTimeMs, hackTimeMs,
-        score: safe(score),
-        finite: Number.isFinite(prepRam) && Number.isFinite(prepThreads)
+        host: target.host, state: target.state,
+        money: target.money, maxMoney: target.maxMoney,
+        scoreBase: target.estimatedDollarsPerSecond,
+        stages, weakenInitial, growThreads, weakenAfterGrow, prepRam,
+        valid: Number.isFinite(prepRam) && stages.every(
+            s => Number.isFinite(s.threads) && s.durationMs > 0
+        )
     };
 }
 
 /**
- * Simule une allocation sur la RAM ACTUELLEMENT libre.
- * On n'ecrase jamais les processus existants, et on conserve la
- * reserve de home. Les placements sont une capacite theorique :
- * les vrais workers mono-operation n'existent pas encore.
+ * Recommandation instantanee, recalculable a chaque rafraichissement.
+ * Ne simule pas une evolution fictive du solde/securite sur 100 cycles.
  */
 export function planOperations(ns, options = {}) {
     const { targets, executionHosts } = analyzeNetwork(ns);
     const reserveHome = options.reserveHome ?? CONFIG.reserveHome;
-    const maxTargets = Math.max(1, Math.floor(options.maxTargets ?? 3));
-
-    const pool = executionHosts.map(host => ({
-        host: host.host,
-        freeRam: Math.max(
-            0, host.freeRam - (host.host === CONFIG.source ? reserveHome : 0)
-        )
-    })).filter(host => host.freeRam > 0)
-        .sort((a, b) => b.freeRam - a.freeRam);
-
+    const active = activeTargets(ns, executionHosts);
+    const pool = executionHosts.map(h => ({
+        host: h.host,
+        freeRam: Math.max(0, h.freeRam -
+            (h.host === CONFIG.source ? reserveHome : 0))
+    })).filter(h => h.freeRam > 0).sort(
+        (a, b) => b.freeRam - a.freeRam || a.host.localeCompare(b.host)
+    );
     const availableRam = pool.reduce((sum, h) => sum + h.freeRam, 0);
+    const capacity = pool.reduce((sum, h) =>
+        sum + Math.floor((h.freeRam + 1e-9) / OPERATION_RAM.WEAKEN), 0);
+
     const candidates = targets.filter(t =>
         t.root && t.maxMoney > 0 &&
         t.playerLevel >= t.requiredLevel &&
         t.estimatedDollarsPerSecond > 0
-    ).map(t => estimatePreparation(ns, t, options))
-        .filter(p => p.finite)
-        .sort((a, b) => b.score - a.score ||
-            a.host.localeCompare(b.host));
+    ).map(t => {
+        const prep = estimatePreparation(ns, t, options);
+        const existingThreads = active.get(t.host) ?? 0;
+        const totalThreads = prep.stages.reduce((s, p) => s + p.threads, 0);
+        // Borne theorique basse sur le nombre de vagues de preparation.
+        // Le vrai temps depend de la dynamique du serveur apres chaque vague.
+        const waves = capacity > 0 ? Math.ceil(totalThreads / capacity) : Infinity;
+        const weightedDuration = prep.stages.reduce((sum, s) => {
+            const cycles = capacity > 0 ? Math.ceil(s.threads / capacity) : Infinity;
+            return sum + cycles * s.durationMs;
+        }, 0);
+        // Heuristique de priorite : cout temporel de preparation et nombre
+        // de vagues penalises. Ne pas appeler ce chiffre du profit net.
+        const preparationSeconds = weightedDuration / 1000;
+        const priority = prep.scoreBase /
+            (1 + preparationSeconds / 60);
+        return {
+            ...prep, existingThreads, waves, preparationSeconds,
+            priority: valid(priority), totalThreads
+        };
+    }).filter(t => t.valid).sort((a, b) =>
+        b.priority - a.priority || a.host.localeCompare(b.host));
 
-    const selected = candidates.slice(0, maxTargets);
+    // Un worker autonome vise deja cette cible : eviter des simulations
+    // contradictoires sans connaissance de ses operations en cours.
+    const eligible = candidates.filter(t => t.existingThreads === 0);
+    const chosen = eligible.find(t => t.stages.some(s => s.threads > 0)) ?? null;
+    const stage = chosen?.stages.find(s => s.threads > 0) ?? null;
+
     const placements = [];
-    const targetsPlan = [];
+    let remaining = stage?.threads ?? 0;
     let allocatedRam = 0;
     let totalThreads = 0;
-
-    for (const target of selected) {
-        // L'ordre est intentionnel : affaiblir, reconstituer, compenser.
-        const stages = [
-            ["WEAKEN", target.weakenInitial],
-            ["GROW", target.growThreads],
-            ["WEAKEN", target.weakenAfterGrow]
-        ];
-        const assigned = { WEAKEN: 0, GROW: 0 };
-        let remainingTotal = 0;
-
-        for (const [operation, required] of stages) {
-            let remaining = required;
-            const cost = OPERATION_RAM[operation];
-            for (const host of pool) {
-                if (remaining <= 0) break;
-                const possible = Math.floor((host.freeRam + 1e-9) / cost);
-                const threads = Math.min(remaining, possible);
-                if (threads < 1) continue;
-                const ram = threads * cost;
-                host.freeRam = Math.max(0, host.freeRam - ram);
-                placements.push({
-                    host: host.host,
-                    target: target.host,
-                    operation, threads, ram
-                });
-                assigned[operation] += threads;
-                allocatedRam += ram;
-                totalThreads += threads;
-                remaining -= threads;
-            }
-            remainingTotal += remaining;
+    if (chosen && stage) {
+        for (const h of pool) {
+            const cost = OPERATION_RAM[stage.operation];
+            const threads = Math.min(remaining, Math.floor((h.freeRam + 1e-9) / cost));
+            if (threads < 1) continue;
+            const ram = threads * cost;
+            placements.push({
+                host: h.host, target: chosen.host,
+                operation: stage.operation, label: stage.label,
+                threads, ram
+            });
+            remaining -= threads;
+            totalThreads += threads;
+            allocatedRam += ram;
+            if (remaining === 0) break;
         }
-        targetsPlan.push({
-            ...target,
-            assigned,
-            remainingThreads: remainingTotal,
-            complete: remainingTotal === 0
-        });
     }
 
     return {
-        mode: "SIMULATION",
-        availableRam, allocatedRam, totalThreads,
-        candidates, targetsPlan, placements,
-        note: "Couts RAM theoriques (H 1.70 / G 1.75 / W 1.75 GB). " +
-            "Preparation seulement; pas de hack planifie ni d'execution."
+        mode: "SIMULATION", availableRam, allocatedRam, totalThreads,
+        candidates, placements, chosen, stage,
+        remainingThreads: remaining,
+        activeTargets: [...active.entries()].map(([host, threads]) => ({ host, threads })),
+        note: "V3 : une seule phase proposee pour ce cycle. Durees et RAM " +
+            "indicatives; reevaluer apres chaque operation. Aucun processus modifie."
     };
 }
 
 export async function main(ns) {
     ns.disableLog("ALL");
     const plan = planOperations(ns);
-    ns.tprint("NEXUS SCHEDULER V2 - SIMULATION / AUCUNE EXECUTION");
+    ns.tprint("NEXUS SCHEDULER V3 - SIMULATION");
     ns.tprint(
-        `RAM libre: ${plan.availableRam.toFixed(1)} GB | ` +
-        `RAM affectee: ${plan.allocatedRam.toFixed(1)} GB | ` +
-        `Threads: ${plan.totalThreads}`
+        `RAM libre apres reserve: ${plan.availableRam.toFixed(1)} Go | ` +
+        `RAM simulee: ${plan.allocatedRam.toFixed(1)} Go`
     );
-    for (const target of plan.targetsPlan) {
+    for (const t of plan.candidates.slice(0, 8)) {
         ns.tprint(
-            `${target.host} [${target.state}] | ` +
-            `W:${target.weakenInitial} G:${target.growThreads} ` +
-            `W+:${target.weakenAfterGrow} | ` +
-            `Restant: ${target.remainingThreads} | ` +
-            `score: ${target.score.toFixed(2)}`
+            `${t.host}: W=${t.weakenInitial} G=${t.growThreads} ` +
+            `W+=${t.weakenAfterGrow} | cycles min=${t.waves} ` +
+            `| preparation ~${Math.round(t.preparationSeconds)}s ` +
+            `| actif=${t.existingThreads} thr | priorite=${t.priority.toFixed(2)}`
         );
     }
-    for (const item of plan.placements) {
+    if (plan.chosen && plan.stage) {
         ns.tprint(
-            `${item.host} -> ${item.target}: ${item.operation} ` +
-            `${item.threads} threads (${item.ram.toFixed(1)} GB)`
+            `PROCHAIN CYCLE: ${plan.stage.operation} ${plan.chosen.host} ` +
+            `(${plan.stage.label}) ${plan.totalThreads}/${plan.stage.threads} threads`
         );
+    } else {
+        ns.tprint("Aucune phase de preparation libre pour ce cycle.");
+    }
+    for (const p of plan.placements) {
+        ns.tprint(`${p.host} -> ${p.target}: ${p.threads} ${p.operation}`);
     }
     ns.tprint(plan.note);
 }
