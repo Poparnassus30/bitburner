@@ -26,7 +26,7 @@ import {
     getDeployment
 } from "/nexus/services/registry.js";
 
-export const VERSION = 8;
+export const VERSION = 9;
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -325,7 +325,7 @@ export async function main(ns) {
 
         const out = [];
 
-        out.push("NEXUS - MASTER CONTROL V8");
+        out.push("NEXUS - MASTER CONTROL V9");
         out.push("=".repeat(125));
         out.push("");
 
@@ -569,7 +569,7 @@ export async function main(ns) {
         // 06 - SCHEDULER V2 / PREPARATION THEORIQUE
 
         out.push("");
-        out.push("06 - SCHEDULER V2 / PREPARATION (SIMULATION)");
+        out.push("06 - SCHEDULER V3 / PROCHAIN CYCLE (SIMULATION)");
         out.push(line());
 
         try {
@@ -579,7 +579,7 @@ export async function main(ns) {
                 `RAM affectee virtuellement: ${ram(plan.allocatedRam)} GB | ` +
                 `Threads: ${plan.totalThreads}`
             );
-            out.push("W = weaken initial | G = grow | W+ = weaken compensatoire");
+            out.push("W=weaken G=grow W+=compensatoire | PRIORITE V3");
             out.push("");
             out.push(
                 left("CIBLE", 23) +
@@ -592,7 +592,7 @@ export async function main(ns) {
                 right("SCORE", 12)
             );
             out.push(line());
-            for (const target of plan.targetsPlan) {
+            for (const target of plan.candidates.slice(0, 10)) {
                 out.push(
                     left(target.host, 23) +
                     left(target.state, 18) +
@@ -600,8 +600,8 @@ export async function main(ns) {
                     right(target.growThreads, 8) +
                     right(target.weakenAfterGrow, 8) +
                     right(ram(target.prepRam), 12) +
-                    right(target.remainingThreads, 9) +
-                    right(target.score.toFixed(2), 12)
+                    right(target.totalThreads, 9) +
+                    right(target.priority.toFixed(2), 12)
                 );
             }
             if (!plan.targetsPlan.length) {
@@ -629,12 +629,13 @@ export async function main(ns) {
                 out.push("Affichage des 20 premieres affectations.");
             }
             out.push("");
+            out.push(plan.chosen ? ('PROCHAIN CYCLE: ' + plan.stage.operation + ' ' + plan.chosen.host + ' | ' + plan.totalThreads + '/' + plan.stage.threads + ' threads') : 'Aucune cible disponible.');
             out.push(plan.note);
             out.push(
                 "Simulation basee sur la RAM libre: aucune instance existante arretee."
             );
         } catch (error) {
-            out.push(`ERREUR PLANIFICATION V2: ${String(error)}`);
+            out.push(`ERREUR PLANIFICATION V3: ${String(error)}`);
         }
 
         out.push("");
