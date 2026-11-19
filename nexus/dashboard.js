@@ -7,6 +7,7 @@ import {
 import { CONFIG } from "/nexus/config/config.js";
 import { WORKERS } from "/nexus/config/workers.js";
 import { inspectTarget } from "/nexus/core/targeting.js";
+import { planOperations } from "/nexus/core/scheduler.js";
 
 import {
     discoverNetwork
@@ -25,7 +26,7 @@ import {
     getDeployment
 } from "/nexus/services/registry.js";
 
-export const VERSION = 6;
+export const VERSION = 7;
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -324,7 +325,7 @@ export async function main(ns) {
 
         const out = [];
 
-        out.push("NEXUS - MASTER CONTROL V6");
+        out.push("NEXUS - MASTER CONTROL V7");
         out.push("=".repeat(125));
         out.push("");
 
@@ -561,6 +562,49 @@ export async function main(ns) {
         }
         if (financialTargets.length > 15) {
             out.push("Affichage limite aux 15 premieres cibles.");
+        }
+
+        out.push("");
+        out.push(line());
+        // 06 - SCHEDULER / PLAN THEORIQUE
+
+        out.push("");
+        out.push("06 - SCHEDULER / PLAN THEORIQUE (AUCUNE EXECUTION)");
+        out.push(line());
+
+        try {
+            const plan = planOperations(ns);
+            out.push(
+                `RAM libre apres reserve: ${ram(plan.availableRam)} GB | ` +
+                `RAM affectee virtuellement: ${ram(plan.allocatedRam)} GB | ` +
+                `Threads equivalents: ${plan.totalThreads}`
+            );
+            out.push("Les workers existants restent intacts.");
+            out.push("");
+            out.push(
+                left("HOST", 25) +
+                left("OPERATION", 14) +
+                left("CIBLE", 24) +
+                right("THREADS", 10) +
+                right("RAM", 12)
+            );
+            out.push(line());
+            for (const item of plan.placements.slice(0, 14)) {
+                out.push(
+                    left(item.host, 25) +
+                    left(item.operation, 14) +
+                    left(item.target, 24) +
+                    right(item.threads, 10) +
+                    right(ram(item.ram), 12)
+                );
+            }
+            if (!plan.placements.length) {
+                out.push("Aucune affectation possible dans les conditions actuelles.");
+            }
+            out.push("");
+            out.push(plan.note);
+        } catch (error) {
+            out.push(`ERREUR PLANIFICATION: ${String(error)}`);
         }
 
         out.push("");
