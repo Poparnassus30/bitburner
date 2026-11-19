@@ -26,7 +26,7 @@ import {
     getDeployment
 } from "/nexus/services/registry.js";
 
-export const VERSION = 7;
+export const VERSION = 8;
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -325,7 +325,7 @@ export async function main(ns) {
 
         const out = [];
 
-        out.push("NEXUS - MASTER CONTROL V7");
+        out.push("NEXUS - MASTER CONTROL V8");
         out.push("=".repeat(125));
         out.push("");
 
@@ -566,10 +566,10 @@ export async function main(ns) {
 
         out.push("");
         out.push(line());
-        // 06 - SCHEDULER / PLAN THEORIQUE
+        // 06 - SCHEDULER V2 / PREPARATION THEORIQUE
 
         out.push("");
-        out.push("06 - SCHEDULER / PLAN THEORIQUE (AUCUNE EXECUTION)");
+        out.push("06 - SCHEDULER V2 / PREPARATION (SIMULATION)");
         out.push(line());
 
         try {
@@ -577,34 +577,64 @@ export async function main(ns) {
             out.push(
                 `RAM libre apres reserve: ${ram(plan.availableRam)} GB | ` +
                 `RAM affectee virtuellement: ${ram(plan.allocatedRam)} GB | ` +
-                `Threads equivalents: ${plan.totalThreads}`
+                `Threads: ${plan.totalThreads}`
             );
-            out.push("Les workers existants restent intacts.");
+            out.push("W = weaken initial | G = grow | W+ = weaken compensatoire");
             out.push("");
             out.push(
-                left("HOST", 25) +
-                left("OPERATION", 14) +
-                left("CIBLE", 24) +
-                right("THREADS", 10) +
-                right("RAM", 12)
+                left("CIBLE", 23) +
+                left("ETAT", 18) +
+                right("W", 8) +
+                right("G", 8) +
+                right("W+", 8) +
+                right("PREP GB", 12) +
+                right("RESTE", 9) +
+                right("SCORE", 12)
             );
             out.push(line());
-            for (const item of plan.placements.slice(0, 14)) {
+            for (const target of plan.targetsPlan) {
                 out.push(
-                    left(item.host, 25) +
-                    left(item.operation, 14) +
-                    left(item.target, 24) +
-                    right(item.threads, 10) +
+                    left(target.host, 23) +
+                    left(target.state, 18) +
+                    right(target.weakenInitial, 8) +
+                    right(target.growThreads, 8) +
+                    right(target.weakenAfterGrow, 8) +
+                    right(ram(target.prepRam), 12) +
+                    right(target.remainingThreads, 9) +
+                    right(target.score.toFixed(2), 12)
+                );
+            }
+            if (!plan.targetsPlan.length) {
+                out.push("Aucune cible eligible pour cette simulation.");
+            }
+            out.push("");
+            out.push(
+                left("HOST", 23) +
+                left("OP.", 10) +
+                left("CIBLE", 23) +
+                right("THR", 7) +
+                right("RAM GB", 12)
+            );
+            out.push(line());
+            for (const item of plan.placements.slice(0, 20)) {
+                out.push(
+                    left(item.host, 23) +
+                    left(item.operation, 10) +
+                    left(item.target, 23) +
+                    right(item.threads, 7) +
                     right(ram(item.ram), 12)
                 );
             }
-            if (!plan.placements.length) {
-                out.push("Aucune affectation possible dans les conditions actuelles.");
+            if (plan.placements.length > 20) {
+                out.push("Affichage des 20 premieres affectations.");
             }
             out.push("");
             out.push(plan.note);
+            out.push(
+                "Simulation basee sur la RAM libre: aucune instance existante arretee."
+            );
         } catch (error) {
-            out.push(`ERREUR PLANIFICATION: ${String(error)}`);
+            out.push(`ERREUR PLANIFICATION V2: ${String(error)}`);
         }
 
         out.push("");
