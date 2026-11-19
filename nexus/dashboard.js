@@ -566,7 +566,7 @@ export async function main(ns) {
 
         out.push("");
         out.push(line());
-        // 06 - SCHEDULER V2 / PREPARATION THEORIQUE
+        // 06 - SCHEDULER V3 / PLANIFICATION PAR CYCLE
 
         out.push("");
         out.push("06 - SCHEDULER V3 / PROCHAIN CYCLE (SIMULATION)");
@@ -588,8 +588,8 @@ export async function main(ns) {
                 right("G", 8) +
                 right("W+", 8) +
                 right("PREP GB", 12) +
-                right("RESTE", 9) +
-                right("SCORE", 12)
+                right("TOTAL", 9) +
+                right("PRIORITE", 12)
             );
             out.push(line());
             for (const target of plan.candidates.slice(0, 10)) {
@@ -604,7 +604,7 @@ export async function main(ns) {
                     right(target.priority.toFixed(2), 12)
                 );
             }
-            if (!plan.targetsPlan.length) {
+            if (!plan.candidates.length) {
                 out.push("Aucune cible eligible pour cette simulation.");
             }
             out.push("");
