@@ -22,9 +22,9 @@ function requiredThreads(amount, effect) {
     return effect > 0 ? Math.ceil(amount / effect) : Infinity;
 }
 
-function activeTargets(ns, executionHosts) {
+function activeTargets(ns, allServers) {
     const active = new Map();
-    for (const machine of executionHosts) {
+    for (const machine of allServers) {
         for (const p of ns.ps(machine.host)) {
             // Reconnaissance du worker existant, sans le modifier.
             const file = String(p.filename).replace(/^\/+/, "");
@@ -83,7 +83,7 @@ export function estimatePreparation(ns, target, options = {}) {
 export function planOperations(ns, options = {}) {
     const { targets, executionHosts } = analyzeNetwork(ns);
     const reserveHome = options.reserveHome ?? CONFIG.reserveHome;
-    const active = activeTargets(ns, executionHosts);
+    const active = activeTargets(ns, targets.filter(t => t.root));
     const pool = executionHosts.map(h => ({
         host: h.host,
         freeRam: Math.max(0, h.freeRam -
