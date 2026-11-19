@@ -26,7 +26,7 @@ import {
     getDeployment
 } from "/nexus/services/registry.js";
 
-export const VERSION = 9;
+export const VERSION = 10;
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -325,7 +325,7 @@ export async function main(ns) {
 
         const out = [];
 
-        out.push("NEXUS - MASTER CONTROL V9");
+        out.push("NEXUS - MASTER CONTROL V10");
         out.push("=".repeat(125));
         out.push("");
 
@@ -566,10 +566,10 @@ export async function main(ns) {
 
         out.push("");
         out.push(line());
-        // 06 - SCHEDULER V3 / PLANIFICATION PAR CYCLE
+        // 06 - SCHEDULER V4 / COMPARAISON D'HORIZONS
 
         out.push("");
-        out.push("06 - SCHEDULER V3 / PROCHAIN CYCLE (SIMULATION)");
+        out.push("06 - SCHEDULER V4 / STRATEGIES (SIMULATION)");
         out.push(line());
 
         try {
@@ -579,29 +579,34 @@ export async function main(ns) {
                 `RAM affectee virtuellement: ${ram(plan.allocatedRam)} GB | ` +
                 `Threads: ${plan.totalThreads}`
             );
-            out.push("W=weaken G=grow W+=compensatoire | PRIORITE V3");
+            out.push("Comparaison brute par thread hack - 5 min / 30 min / 2 h");
+            out.push("Preparation estimee; revenus NON garantis (hors entretien futur).");
             out.push("");
             out.push(
-                left("CIBLE", 23) +
-                left("ETAT", 18) +
-                right("W", 8) +
+                left("CIBLE", 22) +
+                left("STRATEGIE", 16) +
+                right("PREP MIN", 11) +
+                right("W", 7) +
                 right("G", 8) +
                 right("W+", 8) +
-                right("PREP GB", 12) +
-                right("TOTAL", 9) +
-                right("PRIORITE", 12)
+                right("5 MIN $", 14) +
+                right("30 MIN $", 14) +
+                right("2 H $", 14) +
+                right("ACT.", 7)
             );
             out.push(line());
-            for (const target of plan.candidates.slice(0, 10)) {
+            for (const t of plan.candidates.slice(0, 12)) {
                 out.push(
-                    left(target.host, 23) +
-                    left(target.state, 18) +
-                    right(target.weakenInitial, 8) +
-                    right(target.growThreads, 8) +
-                    right(target.weakenAfterGrow, 8) +
-                    right(ram(target.prepRam), 12) +
-                    right(target.totalThreads, 9) +
-                    right(target.priority.toFixed(2), 12)
+                    left(t.host, 22) +
+                    left(t.strategy, 16) +
+                    right((t.preparationSeconds / 60).toFixed(1), 11) +
+                    right(t.weakenInitial, 7) +
+                    right(t.growThreads, 8) +
+                    right(t.weakenAfterGrow, 8) +
+                    right("$" + fmt(t.grossByHorizon[0]), 14) +
+                    right("$" + fmt(t.grossByHorizon[1]), 14) +
+                    right("$" + fmt(t.grossByHorizon[2]), 14) +
+                    right(t.existingThreads, 7)
                 );
             }
             if (!plan.candidates.length) {
@@ -635,7 +640,7 @@ export async function main(ns) {
                 "Simulation basee sur la RAM libre: aucune instance existante arretee."
             );
         } catch (error) {
-            out.push(`ERREUR PLANIFICATION V3: ${String(error)}`);
+            out.push(`ERREUR PLANIFICATION V4: ${String(error)}`);
         }
 
         out.push("");
