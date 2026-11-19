@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import difflib
 from pathlib import Path, PurePosixPath
 
 from websockets.asyncio.server import serve
@@ -43,7 +44,12 @@ def digest(value: str) -> str:
 def load_state() -> dict[str, str] | None:
     if not STATE.exists():
         return None
-    data = json.loads(STATE.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(STATE.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ValueError("Etat JSON illisible (encodage UTF-8 requis)") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("Etat JSON invalide (verifier le BOM UTF-8 et la syntaxe)") from exc
     if not isinstance(data, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in data.items()
     ):
@@ -140,7 +146,7 @@ async def do_import(api: Api) -> None:
     print("Verifier les secrets avant git add/commit/push, car le depot GitHub est public.")
 
 
-async def inspect(api: Api, *, deploy: bool) -> None:
+async def inspect(api: Api, *, deploy: bool, show_diff: bool = False) -> None:
     state = load_state()
     if state is None:
         print("REFUS: executer 'import' avant status/push.")
@@ -195,6 +201,16 @@ async def inspect(api: Api, *, deploy: bool) -> None:
                 print(line, end="")
 
             print("\n=== FIN DIAGNOSTIC ===\n")
+        if show_diff and remote_hash != local_hash:
+            print(f"\n=== DIFF {name}: BITBURNER -> VS_CODE ===")
+            for line in difflib.unified_diff(
+                remote_content.splitlines(keepends=True),
+                value.splitlines(keepends=True),
+                fromfile=f"BITBURNER/{name}",
+                tofile=f"VS_CODE/{name}",
+            ):
+                print(line, end="" if line.endswith("\n") else "\n")
+            print(f"=== FIN DIFF {name} ===\n")
         if remote_hash == local_hash:
             unchanged += 1
             # Aligner la base uniquement si les fichiers sont identiques.
@@ -272,7 +288,7 @@ async def main(command: str) -> None:
             if command == "import":
                 await do_import(api)
             else:
-                await inspect(api, deploy=(command == "push"))
+                await inspect(api, deploy=(command == "push"), show_diff=(command == "diff"))
         except (ConnectionClosed, asyncio.TimeoutError) as exc:
             print("Connexion interrompue :", exc)
         except Exception as exc:
@@ -291,7 +307,7 @@ async def main(command: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NEXUS Sync - transfert manuel protege")
-    parser.add_argument("command", choices=("import", "status", "push"))
+    parser.add_argument("command", choices=("import", "status", "diff", "push"))
     args = parser.parse_args()
     try:
         asyncio.run(main(args.command))
