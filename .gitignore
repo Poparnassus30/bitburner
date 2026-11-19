@@ -7,3 +7,7 @@ __pycache__/
 *.log
 .DS_Store
 .vscode/
+bitburner-sync/.sync-state.json
+bitburner-sync/.sync-state.tmp
+nexus/data/
+nexus/sync-connection-test.js
