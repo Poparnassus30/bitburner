@@ -1,18 +1,20 @@
 /** @param {NS} ns
- * NEXUS SCHEDULER V3 - planification temporelle en lecture seule.
+ * NEXUS SCHEDULER V4 - comparaison d'horizons et plan de preparation.
  * Un seul cycle et une seule phase de preparation sont proposes a la fois.
  * Aucun exec, kill, scp, hack, grow ou weaken n'est lance.
  */
 import { analyzeNetwork, TARGETING } from "/nexus/core/targeting.js";
 import { CONFIG } from "/nexus/config/config.js";
 
-export const VERSION = 3;
+export const VERSION = 4;
 
 // Cout theorique pour de futurs workers mono-operation.
 // Remplacer par getScriptRam() lorsque ces workers existeront.
 export const OPERATION_RAM = Object.freeze({
     HACK: 1.70, GROW: 1.75, WEAKEN: 1.75
 });
+
+export const HORIZONS = Object.freeze([300, 1800, 7200]); // 5 min, 30 min, 2 h
 
 const valid = (v, fallback = 0) =>
     Number.isFinite(v) && v >= 0 ? v : fallback;
@@ -113,11 +115,24 @@ export function planOperations(ns, options = {}) {
         // Heuristique de priorite : cout temporel de preparation et nombre
         // de vagues penalises. Ne pas appeler ce chiffre du profit net.
         const preparationSeconds = weightedDuration / 1000;
-        const priority = prep.scoreBase /
-            (1 + preparationSeconds / 60);
+        // Estimation BRUTE pour un seul thread hack, avec hypothese
+        // irreelle d'un serveur ensuite stable et sans re-preparation.
+        // Sert UNIQUEMENT a comparer des ordres de grandeur.
+        const grossByHorizon = HORIZONS.map(seconds =>
+            Math.max(0, seconds - preparationSeconds) * prep.scoreBase
+        );
+        const priority = grossByHorizon[1] > 0
+            ? grossByHorizon[1]
+            : prep.scoreBase / (1 + preparationSeconds / 60);
+        const strategy = preparationSeconds <= HORIZONS[0]
+            ? "RAPIDE"
+            : preparationSeconds <= HORIZONS[1]
+                ? "MOYEN_TERME"
+                : "LONG_TERME";
         return {
             ...prep, existingThreads, waves, preparationSeconds,
-            priority: valid(priority), totalThreads
+            priority: valid(priority), totalThreads,
+            grossByHorizon, strategy
         };
     }).filter(t => t.valid).sort((a, b) =>
         b.priority - a.priority || a.host.localeCompare(b.host));
@@ -151,30 +166,29 @@ export function planOperations(ns, options = {}) {
     }
 
     return {
-        mode: "SIMULATION", availableRam, allocatedRam, totalThreads,
+        mode: "SIMULATION", version: VERSION,
+        horizons: HORIZONS, availableRam, allocatedRam, totalThreads,
         candidates, placements, chosen, stage,
         remainingThreads: remaining,
         activeTargets: [...active.entries()].map(([host, threads]) => ({ host, threads })),
-        note: "V3 : une seule phase proposee pour ce cycle. Durees et RAM " +
-            "indicatives; reevaluer apres chaque operation. Aucun processus modifie."
+        comparison: eligible.slice(0, 10),
+        note: "V4 : scenario brut par 1 thread hack sur 5/30/120 min. " +
+            "HORS grow/weaken futurs, variation d\u0027argent et de securite. " +
+            "Reevaluer chaque cycle; aucune execution."
     };
 }
 
 export async function main(ns) {
     ns.disableLog("ALL");
     const plan = planOperations(ns);
-    ns.tprint("NEXUS SCHEDULER V3 - SIMULATION");
+    ns.tprint("NEXUS SCHEDULER V4 - SIMULATION");
     ns.tprint(
         `RAM libre apres reserve: ${plan.availableRam.toFixed(1)} Go | ` +
         `RAM simulee: ${plan.allocatedRam.toFixed(1)} Go`
     );
     for (const t of plan.candidates.slice(0, 8)) {
-        ns.tprint(
-            `${t.host}: W=${t.weakenInitial} G=${t.growThreads} ` +
-            `W+=${t.weakenAfterGrow} | cycles min=${t.waves} ` +
-            `| preparation ~${Math.round(t.preparationSeconds)}s ` +
-            `| actif=${t.existingThreads} thr | priorite=${t.priority.toFixed(2)}`
-        );
+        ns.tprint(`${t.host} [${t.strategy}] prep ~${Math.round(t.preparationSeconds)}s` +
+            ` | actif=${t.existingThreads}thr | brut 30min: ${t.grossByHorizon[1].toFixed(0)}`);
     }
     if (plan.chosen && plan.stage) {
         ns.tprint(
