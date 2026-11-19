@@ -161,7 +161,40 @@ async def inspect(api: Api, *, deploy: bool) -> None:
                 to_push.append((name, value))
             continue
 
-        remote_hash = digest(await api.read(name))
+        remote_content = await api.read(name)
+        remote_hash = digest(remote_content)
+
+        if name == "nexus/dashboard.js":
+            import difflib
+
+            print("\n=== DIAGNOSTIC DASHBOARD ===")
+            print("SOURCE :", local_hash)
+            print("HOTE   :", remote_hash)
+            print("BASE   :", old)
+            print("SOURCE == BASE :", local_hash == old)
+            print("HOTE == BASE   :", remote_hash == old)
+            def line_info(content):
+                return {
+                    "caracteres": len(content),
+                    "CRLF": content.count("\r\n"),
+                    "LF": content.count("\n"),
+                    "CR": content.count("\r"),
+                    "fin_ligne": content.endswith("\n"),
+                }
+
+            print("FORMAT SOURCE :", line_info(value))
+            print("FORMAT HOTE   :", line_info(remote_content))
+
+            print("\nDIFFERENCES :")
+            for line in difflib.unified_diff(
+                remote_content.splitlines(keepends=True),
+                value.splitlines(keepends=True),
+                fromfile="BITBURNER",
+                tofile="VS_CODE"
+            ):
+                print(line, end="")
+
+            print("\n=== FIN DIAGNOSTIC ===\n")
         if remote_hash == local_hash:
             unchanged += 1
             # Aligner la base uniquement si les fichiers sont identiques.
