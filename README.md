@@ -59,19 +59,42 @@ Format de commande documenté :
 }
 ```
 
-## Premier test de bitburner-sync
+## NEXUS Sync : import initial puis envoi unidirectionnel
 
-`bitburner-sync/main.py` est un serveur WebSocket local de test, **pas encore un synchroniseur complet**. Il liste les fichiers du serveur `home` avec `getFileNames` puis propose **facultativement** de créer `nexus/sync-connection-test.js` avec `pushFile`, avant de relire le fichier via `getFile`. Aucun fichier NEXUS existant n'est volontairement ciblé.
+**VS Code est la source de référence** ; Bitburner sert à exécuter les scripts. Aucune modification automatique des scripts, aucune suppression, aucun redémarrage.
 
-Depuis PowerShell à la racine du dépôt :
+Depuis PowerShell, dans `D:\\github\\bitburner` :
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r bitburner-sync\requirements.txt
-.\.venv\Scripts\python.exe bitburner-sync\main.py
+python -m venv .venv
+.\\.venv\\Scripts\\python.exe -m pip install -r bitburner-sync\\requirements.txt
 ```
 
-Puis dans Bitburner, `Options → Remote API`, saisir `localhost`, port `12525`, décocher `Use WSS`, puis `Connect`.
+Pour la **première importation seulement** (écrit uniquement dans le dossier local `nexus/`, ne touche pas au jeu) :
+
+```powershell
+.\\.venv\\Scripts\\python.exe bitburner-sync\\main.py import
+```
+
+Chaque invocation lance un serveur WebSocket local : dans Bitburner, `Options → Remote API`, sélectionner `localhost`, port `12525`, WSS désactivé, puis `Connect`. Si Bitburner est déjà connecté, il suffit de laisser la reconnexion s'effectuer. Le programme demande `oui` avant de copier les scripts vers le dossier local.
+
+**Avant de publier** les scripts importés : examiner les fichiers et les secrets ; ce dépôt est public. Créer alors le commit Git initial depuis VS Code / Git. Le registre `nexus/data/` et le script de test `nexus/sync-connection-test.js` ne sont pas importés.
+
+Inspecter les différences (lecture seule) :
+
+```powershell
+.\\.venv\\Scripts\\python.exe bitburner-sync\\main.py status
+```
+
+Envoyer les fichiers modifiés depuis VS Code vers `home` (confirmation obligatoire) :
+
+```powershell
+.\\.venv\\Scripts\\python.exe bitburner-sync\\main.py push
+```
+
+Protection : le premier import enregistre un état de base **local** dans `bitburner-sync/.sync-state.json` (ignoré par Git). Avant chaque envoi, l'outil relit le contenu distant : si ce dernier a changé par rapport à cette base, l'opération est refusée. Les fichiers nouveaux sont créés uniquement s'ils n'existent pas déjà dans le jeu. Chaque fichier envoyé est relu et vérifié.
+
+Ne jamais supprimer `.sync-state.json` après le premier import sans reconstruire explicitement une base commune. Ne pas partager cet état entre PC sans procédure de migration. Le transfert n'est pas atomique entre vérification et écriture : ne pas éditer les mêmes fichiers dans le jeu pendant un déploiement.
 
 ## Sécurité
 
