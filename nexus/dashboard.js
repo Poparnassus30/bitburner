@@ -6,6 +6,7 @@ import {
 
 import { CONFIG } from "/nexus/config/config.js";
 import { WORKERS } from "/nexus/config/workers.js";
+import { inspectTarget } from "/nexus/core/targeting.js";
 
 import {
     discoverNetwork
@@ -24,7 +25,7 @@ import {
     getDeployment
 } from "/nexus/services/registry.js";
 
-export const VERSION = 5;
+export const VERSION = 6;
 
 export async function main(ns) {
     ns.disableLog("ALL");
@@ -72,6 +73,7 @@ export async function main(ns) {
         const servers = [];
         const processes = [];
         const financial = [];
+        const targetAnalysis = [];
 
         const targets = new Set();
         const targetThreads = new Map();
@@ -268,6 +270,36 @@ export async function main(ns) {
         }
 
         // ======================================
+        // TARGETING (ANALYSE SEULE)
+        // ======================================
+
+        for (const host of discovered) {
+            try {
+                targetAnalysis.push(inspectTarget(ns, host));
+            } catch (error) {
+                ns.print(
+                    `TARGETING ERROR ${host}: ${String(error)}`
+                );
+            }
+        }
+
+        const targetPriority = {
+            EXPLOITABLE: 0,
+            A_RECONSTITUER: 1,
+            A_AFFAIBLIR: 2,
+            INACCESSIBLE: 3,
+            NON_FINANCIERE: 4
+        };
+
+        targetAnalysis.sort((a, b) =>
+            (targetPriority[a.state] ?? 99) -
+                (targetPriority[b.state] ?? 99) ||
+            b.estimatedDollarsPerSecond -
+                a.estimatedDollarsPerSecond ||
+            a.host.localeCompare(b.host)
+        );
+
+        // ======================================
         // TRI
         // ======================================
 
@@ -292,7 +324,7 @@ export async function main(ns) {
 
         const out = [];
 
-        out.push("NEXUS - MASTER CONTROL V5");
+        out.push("NEXUS - MASTER CONTROL V6");
         out.push("=".repeat(125));
         out.push("");
 
@@ -464,10 +496,80 @@ export async function main(ns) {
 
         out.push("");
         out.push(line());
+        // 05 - TARGETING / ANALYSE STRATEGIQUE
+
+        out.push("");
+        out.push("05 - TARGETING / ANALYSE STRATEGIQUE (LECTURE SEULE)");
+        out.push(line());
+
+        const exploitable = targetAnalysis.filter(
+            t => t.state === "EXPLOITABLE"
+        ).length;
+        const preparation = targetAnalysis.filter(
+            t => t.state === "A_RECONSTITUER" ||
+                 t.state === "A_AFFAIBLIR"
+        ).length;
+        const ramHosts = targetAnalysis.filter(
+            t => t.root && t.freeRam > 0
+        ).length;
+
+        out.push(
+            `Cibles exploitables: ${exploitable} | ` +
+            `A preparer: ${preparation} | ` +
+            `Hosts avec RAM libre: ${ramHosts}`
+        );
+        out.push(
+            "Estimation $/s/thread: heuristique instantanee, " +
+            "hors couts grow/weaken."
+        );
+        out.push("");
+
+        out.push(
+            left("CIBLE", 23) +
+            left("ETAT", 18) +
+            right("ARGENT", 14) +
+            right("MAX", 14) +
+            right("SEC.+", 9) +
+            right("CHANCE", 9) +
+            right("TEMPS", 10) +
+            right("EST.$/S", 14)
+        );
+        out.push(line());
+
+        const financialTargets = targetAnalysis.filter(
+            t => t.maxMoney > 0
+        );
+        const visibleTargets = financialTargets.slice(0, 15);
+
+        for (const t of visibleTargets) {
+            out.push(
+                left(t.host, 23) +
+                left(t.state, 18) +
+                right("$" + fmt(t.money), 14) +
+                right("$" + fmt(t.maxMoney), 14) +
+                right(t.securityDelta.toFixed(2), 9) +
+                right((t.chance * 100).toFixed(1) + "%", 9) +
+                right(t.hackTime > 0
+                    ? (t.hackTime / 1000).toFixed(1) + "s"
+                    : "—", 10) +
+                right("$" + fmt(t.estimatedDollarsPerSecond), 14)
+            );
+        }
+
+        if (visibleTargets.length === 0) {
+            out.push("Aucune cible financiere detectee.");
+        }
+        if (financialTargets.length > 15) {
+            out.push("Affichage limite aux 15 premieres cibles.");
+        }
+
+        out.push("");
+        out.push(line());
         out.push("V.SOURCE = Version de reference sur home");
         out.push("V.HOTE   = Version declaree du fichier hote");
         out.push("V.EXEC   = Version du processus actif");
         out.push("? = Version inconnue");
+        out.push("TARGETING = Analyse seulement. Aucune commande envoyee aux workers.");
         out.push("Actualisation : 2 secondes");
 
         ns.clearLog();
